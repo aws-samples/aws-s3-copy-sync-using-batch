@@ -28,6 +28,6 @@ RUN yum clean all && \
 
 
 COPY s3CopySyncScript.py .
-COPY testRun.py .
 
+# CMD is set in the batch job definition
 # CMD ["python3","s3CopySyncScript.py"]
