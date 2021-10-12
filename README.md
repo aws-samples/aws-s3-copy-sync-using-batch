@@ -21,6 +21,9 @@
 # Using AWS Batch jobs to bulk copy/sync files in S3
 
 ## Use Cases
+This utility is aimed towards technical teams who are looking for a scaleable way to copy/sync files within S3. In certain cases, teams may want to replicate certin "prod" data into "dev" to have more robust development environments. Teams may also look to transfer data to other buckets to share with external teams or publically. In both scenarios, having control over what data is copied/syned becomes paramount to ensure sensitive data does not make its way to an environment that could cause security concerns. 
+
+An existing solution is [S3 replication](https://docs.aws.amazon.com/AmazonS3/latest/userguide/replication.html), but that comes with certain limitations. Managing replication rules with multiple directories can get cumbersome, the same prefix must be kept, source and destination must be different buckets, and already existing data cannot be backfilled using replication. As workarounds, teams have managed environments to run custom scripts using AWS SDK to overcome such roadblocks.
 
 
 ## Overview
