@@ -4,6 +4,9 @@
     - [Use Cases](#use-cases)
     - [Overview](#overview)
     - [Architecture](#architecture)
+    - [Demo Environment](#demo-environment)
+        - [Prerequisites](#prerequisites)
+        - [Cloudformation Template](#cloudformation-template)
     - [ECR Image](#ecr-image)
     - [S3 Input Location](#s3-input-location)
         - [CSV File Format Details](#csv-file-format-details)
@@ -13,7 +16,7 @@
         - [Job Queue](#job-queue)
         - [Job Definition](#job-definition)
             - [IAM Roles](#iam-roles)
-    - [Eventbridge Rule & Job Invokation](#eventbridge-rule-job-invokation)
+    - [Job Invokation via an Eventbridge Rule](#job-invokation-via-an-eventbridge-rule)
 
 <!-- /MarkdownTOC -->
 
@@ -38,6 +41,21 @@ This is an overview of the architecture described above:
 
 ![awsBatchS3SyncArch](images/awsBatchS3SyncArch.png)
 
+## Demo Environment
+
+### Prerequisites
+**Default (or other) VPC/Subnet/Security Group**
+* To setup the environment from the cloudformation template, you will need a VPC/subnets to launch fargate resources in. A default VPC is suitable for demo purposes.
+* AWS accounts created after `2013-12-04` have a default VPC created. Otherwise, you can [follow these instructions](https://docs.aws.amazon.com/vpc/latest/userguide/default-vpc.html#create-default-vpc) to create it.
+* Make note of the subnetIds and securityGroupIDs or retrieve them via CLI
+    - Default VPC ID
+        + `aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[].VpcId | [0]"`
+    - Get all Subnet IDs for the default VPC
+        + `aws ec2 describe-subnets --filters Name=vpc-id,Values=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[].VpcId | [0]" ) --query "Subnets[].SubnetId"`
+    - Get all Security Group IDs for the default VPC
+        + `aws ec2 describe-security-groups --filters Name=vpc-id,Values=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[].VpcId | [0]" ) --query "SecurityGroups[].GroupId"`
+
+### Cloudformation Template
 
 ## ECR Image
 The ECR Image contains our application logic to sync/copy S3 files based on the csv input. This is done in the python script `s3CopySyncScript.py`. Based on the CSV input, it will perform a [managed transfer using the copy api](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html#S3.Client.copy) if a file is given as a source/destination. If a prefix is given as source/destination, it will use the [AWS CLI to perform an aws s3 sync](https://docs.aws.amazon.com/cli/latest/reference/s3/sync.html).
@@ -181,7 +199,7 @@ More details about these [task IAM roles can be found here](https://docs.aws.ama
 
 
 
-## Eventbridge Rule & Job Invokation
+## Job Invokation via an Eventbridge Rule
 Create an Eventbridge rule that will invoke the AWS Batch job.
 
 Here, the S3 uploads are being logged in cloudtrail. An eventbridge rule will invoke the job with an appropriate upload. Using the naming convention mentioned above, we can use a custom event pattern match and [content filtering](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns-content-based-filtering.html#filtering-prefix-matching) to only trigger on certain uploads.

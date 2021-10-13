@@ -1,0 +1,274 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Sample Template for AWS S3 Copy and Sync using Batch utility
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Default: "mysample-s3copysync-bucket"
+  SecurityGroups:
+    Type: CommaDelimitedList
+    Description: Securty groups attached to farage instances
+  Subnets:
+    Type: CommaDelimitedList
+    Description: Subnets where fargate instances can be launched
+
+
+Resources:
+  InputS3Bucket:
+    Type: "AWS::S3::Bucket"
+    DeletionPolicy : "Delete"
+    Properties:
+      AccessControl: "BucketOwnerFullControl"
+      BucketName: !Sub '${S3BucketName}-${AWS::AccountId}'
+
+  InputS3BucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: !Ref InputS3Bucket
+      PolicyDocument: !Sub '{
+          "Version": "2012-10-17",
+          "Statement": [
+              {
+                  "Sid": "AWSCloudTrailAclCheck20150319",
+                  "Effect": "Allow",
+                  "Principal": {
+                      "Service": "cloudtrail.amazonaws.com"
+                  },
+                  "Action": "s3:GetBucketAcl",
+                  "Resource": "arn:aws:s3:::${InputS3Bucket}"
+              },
+              {
+                  "Sid": "AWSCloudTrailWrite20150319",
+                  "Effect": "Allow",
+                  "Principal": {
+                      "Service": "cloudtrail.amazonaws.com"
+                  },
+                  "Action": "s3:PutObject",
+                  "Resource": "arn:aws:s3:::${InputS3Bucket}/AWSLogs/${AWS::AccountId}/*",
+                  "Condition": {
+                      "StringEquals": {
+                          "s3:x-amz-acl": "bucket-owner-full-control"
+                      }
+                  }
+              }
+          ]
+      }'
+    DependsOn: InputS3Bucket
+
+  InputBucketCloudtrail:
+    Type: "AWS::CloudTrail::Trail"
+    Properties:
+      S3BucketName: !Ref InputS3Bucket
+      IsLogging: True
+      TrailName: !Sub 's3-batch-sync-input-trail-${AWS::AccountId}'
+      EventSelectors:
+        - IncludeManagementEvents: False
+          DataResources:
+            - Type: AWS::S3::Object
+              Values: 
+                - !Sub "arn:aws:s3:::${InputS3Bucket}/input"
+          ReadWriteType: "WriteOnly"
+    DependsOn: InputS3BucketPolicy
+    
+  EventsSubmitBatchJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [events.amazonaws.com]
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument: '{
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Effect": "Allow",
+                      "Action": [
+                          "batch:SubmitJob"
+                      ],
+                      "Resource": "*"
+                  }
+              ]
+          }'
+          PolicyName: !Sub 'SubmitBatchJob-${AWS::AccountId}'
+      RoleName: !Sub 'EventsInvokeS3SyncBatchJob-${AWS::AccountId}'
+
+  BatchJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # ManagedPolicyArns:
+      # - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [ecs-tasks.amazonaws.com]
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument: !Sub '{
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Sid": "VisualEditor0",
+                      "Effect": "Allow",
+                      "Action": [
+                          "s3:PutObject",
+                          "s3:GetObject",
+                          "s3:ListBucketMultipartUploads",
+                          "s3:ListBucket",
+                          "s3:ListMultipartUploadParts"
+                      ],
+                      "Resource": [
+                          "arn:aws:s3:::${InputS3Bucket}/*",
+                          "arn:aws:s3:::${InputS3Bucket}"
+                      ]
+                  }
+              ]
+          }'
+          PolicyName: !Sub 'S3SyncBatchJobRunPolicy-${AWS::AccountId}'
+      RoleName: !Sub 'S3SyncBatchJobRunRole-${AWS::AccountId}'
+
+  BatchExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [ecs-tasks.amazonaws.com]
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument: !Sub '{
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Effect": "Allow",
+                      "Action": [
+                          "logs:CreateLogGroup",
+                          "logs:CreateLogStream",
+                          "logs:PutLogEvents",
+                          "logs:DescribeLogStreams"
+                      ],
+                      "Resource": [
+                          "arn:aws:logs:*:*:*"
+                      ]
+                  }
+              ]
+          }'
+          PolicyName: !Sub 'S3SyncBatchExecutionPolicy-${AWS::AccountId}'
+      RoleName: !Sub 'S3SyncBatchExecRole-${AWS::AccountId}'
+
+  ScriptECRRepo:
+    Type: "AWS::ECR::Repository"
+    Properties: 
+      RepositoryName: !Sub 'al-s3-sync-repo-${AWS::AccountId}'
+
+  S3SyncBatchComputeEnv:
+    Type: "AWS::Batch::ComputeEnvironment"
+    Properties: 
+      ComputeEnvironmentName: !Sub 's3-sync-compute-env-${AWS::AccountId}'
+      Type: 'MANAGED'
+      State: 'Enabled'
+      ComputeResources:
+        Type: 'FARGATE'
+        MaxvCpus: 8
+        SecurityGroupIds: !Ref SecurityGroups
+        Subnets: !Ref Subnets
+
+  S3SyncBatchJobQueue:
+    Type: "AWS::Batch::JobQueue"
+    Properties: 
+      JobQueueName: !Sub 's3-sync-batch-job-queue-${AWS::AccountId}'
+      Priority: 1
+      State: "ENABLED"
+      ComputeEnvironmentOrder:
+        - ComputeEnvironment: !Ref S3SyncBatchComputeEnv
+          Order: 1
+    DependsOn: S3SyncBatchComputeEnv
+
+  S3SyncBatchJobDef:
+    Type: "AWS::Batch::JobDefinition"
+    Properties:
+      JobDefinitionName: !Sub 's3-sync-batch-job-def-${AWS::AccountId}'
+      PlatformCapabilities: ["FARGATE"]
+      Type: "container"
+      ContainerProperties:
+        Command: ["python3","s3CopySyncScript.py","Ref::s3_bucket","Ref::s3_key","True","True"]
+        ExecutionRoleArn: !GetAtt BatchExecRole.Arn
+        FargatePlatformConfiguration:
+          PlatformVersion: "1.4.0"
+        Image: !Sub '${ScriptECRRepo.RepositoryUri}:latest'
+        JobRoleArn: !GetAtt BatchJobRole.Arn
+        NetworkConfiguration:
+          AssignPublicIp: "ENABLED"
+        ResourceRequirements:
+          - Type: "VCPU"
+            Value: "1"
+          - Type: "MEMORY"
+            Value: "2048"
+    DependsOn: ['BatchJobRole','BatchExecRole','ScriptECRRepo']
+
+  InputEventbridgeRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Name: !Sub 's3-batch-sync-invoke-${AWS::AccountId}'
+      EventPattern: !Sub '{
+        "source": ["aws.s3"],
+        "detail-type": ["AWS API Call via CloudTrail"],
+        "detail": {
+          "eventSource": ["s3.amazonaws.com"],
+          "eventName": ["PutObject", "CompleteMultipartUpload"],
+          "requestParameters": {
+            "bucketName": ["${InputS3Bucket}"],
+            "key": [{
+              "prefix": "input/s3_batch_sync_input-"
+            }]
+          }
+        }
+      }'
+      Targets:
+        - Arn: !Ref S3SyncBatchJobQueue
+          Id: S3CopySyncJobTarget
+          BatchParameters:
+            JobDefinition: !Ref S3SyncBatchJobDef
+            JobName: "s3-batch-sync-eventbridge-invoked-job"
+            RetryStrategy:
+              Attempts: 2
+          InputTransformer:
+            InputPathsMap:
+              "S3BucketValue" : "$.detail.requestParameters.bucketName"
+              "S3KeyValue" : "$.detail.requestParameters.key"
+            InputTemplate: |
+              {"Parameters" : {"s3_bucket": <S3BucketValue>, "s3_key": <S3KeyValue>}}
+          RoleArn: !GetAtt EventsSubmitBatchJobRole.Arn
+    DependsOn: ['InputBucketCloudtrail','S3SyncBatchJobQueue','S3SyncBatchJobDef','EventsSubmitBatchJobRole']
+
+Outputs:
+  S3Bucket:
+    Description: Name of the S3 Bucket where logs are stored and where data can be synced to/from
+    Value: !Ref InputS3Bucket
+  Cloutrail:
+    Description: Trail that captures events in the S3 Bucket
+    Value: !Ref InputBucketCloudtrail
+  ECRRepo:
+    Description: Repo where the docker image with application logic can be stored. Build the dockerfile and push here
+    Value: !Ref ScriptECRRepo
+  BatchComputeEnv:
+    Description: AWS Batch compute environment for managed fargate resources
+    Value: !Ref S3SyncBatchComputeEnv
+  BatchJobQueue:
+    Description: AWS Batch job queue for submitted demo jobs
+    Value: !Ref S3SyncBatchJobQueue
+  BatchJobDefinition:
+    Description: AWS Batch job definition. References the application logic in ECR
+    Value: !Ref S3SyncBatchJobDef
+  EventbridgeRule:
+    Description: Eventbridge rule that matches input events in S3 and triggers the batch job
+    Value: !Ref InputEventbridgeRule
