@@ -56,6 +56,11 @@ This is an overview of the architecture described above:
         + `aws ec2 describe-security-groups --filters Name=vpc-id,Values=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[].VpcId | [0]" ) --query "SecurityGroups[].GroupId"`
 
 ### Cloudformation Template
+* Create a stack from the cloudformation template from the `cfn` directory. This creates an environment identical to the one in this guide.
+* From the commands above, you will need to pass subnetId(s) and security group ID(s) as parameters to create the stack
+* Once creation is complete, you can follow the rest of the guide below, namely:
+    - You can build and push a the Docker image to ECR
+    - Once pushed, you can run Batch sync/copy jobs for objects within the S3 bucket the cfn creates.
 
 ## ECR Image
 The ECR Image contains our application logic to sync/copy S3 files based on the csv input. This is done in the python script `s3CopySyncScript.py`. Based on the CSV input, it will perform a [managed transfer using the copy api](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html#S3.Client.copy) if a file is given as a source/destination. If a prefix is given as source/destination, it will use the [AWS CLI to perform an aws s3 sync](https://docs.aws.amazon.com/cli/latest/reference/s3/sync.html).
@@ -98,7 +103,7 @@ Setup a trail that will monitor the S3 location where the input file will land. 
 
 ## AWS Batch
 
-### Compute Environment 
+### Compute Environment
 This will serve as a pool that our batch jobs can pull resources from. Create a `managed environment` with the instance configuration set to `fargate` for this example. Set the max vCPUs to set an upper limit for concurrent fargate resources being used. Other configuration options for an AWS Batch [Compute Environment are detailed here](https://docs.aws.amazon.com/batch/latest/userguide/create-compute-environment.html).
 Lastly pick the VPC and subnets your environment will be located in, and security groups that may need to be attached to instances. If you're using S3 VPC gateway endpoints this would be key. In our example, we're using the default VPC since we're accessing S3 through public internet.
 Once complete, the environment state would be `ENABLED`.  
